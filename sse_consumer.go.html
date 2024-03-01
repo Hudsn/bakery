@@ -1,0 +1,17 @@
+window.onload = function() {
+    const reloadEventSource = new EventSource("{{.GetEndpoint}}")
+    reloadEventSource.onopen = (event) => {
+        console.log(`Connected to event source.`)
+    }
+
+    reloadEventSource.onmessage = (event) => {
+        let data = JSON.parse(event.data)
+        if (data.reload === true) {
+            location.reload()
+        }
+    }
+
+    reloadEventSource.onerror = (error) => {
+        console.log(`Encountered error with reload poller.`)
+    }
+}
