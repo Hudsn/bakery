@@ -1,9 +1,11 @@
 package bakery
 
 import (
+	"bytes"
 	"embed"
 	"fmt"
 	"html/template"
+	"io/fs"
 	"net/http"
 	"os"
 )
@@ -11,22 +13,74 @@ import (
 //go:embed sse_consumer.go.html
 var sseConsumer embed.FS
 
-func (b Bakery) MakeStaticHandler(route string) http.HandlerFunc {
-	handler := http.FileServer(http.FS(b.staticFS))
-	if b.isDevEnv {
-		handler = http.FileServer(http.Dir(b.StaticRootDir))
+//go:embed static_page_wrapper.go.html
+var iframeWrapper embed.FS
+
+func MakeStaticHandler(route string, rootDir string, targetFS fs.FS, isDevEnv bool) http.HandlerFunc {
+	handler := http.FileServer(http.FS(targetFS))
+	if isDevEnv {
+		handler = http.FileServer(http.Dir(rootDir))
 	}
 
 	handler = http.StripPrefix(route, handler)
 	return func(w http.ResponseWriter, r *http.Request) {
-		if b.isDevEnv {
+		if isDevEnv {
 			w.Header().Set("Cache-Control", "no-cache")
 		}
 		handler.ServeHTTP(w, r)
 	}
 }
 
-func (b Bakery) MakeScriptHandler(checkinEndpoint string, port int) (http.HandlerFunc, error) {
+// creates an html page embedding the page at the target route within an iframe so we can enable hot reloading.
+// for dev use only; mostly useful for editing static pages that don't use templating (generic error pages / content pages) .
+func MakeIframeWatcher(watchHtmlRoute string, reloadScriptPath string) (http.HandlerFunc, error) {
+
+	type IframeData struct {
+		TargetRoute      string
+		ReloadScriptPath string
+	}
+
+	t, err := template.ParseFS(iframeWrapper, "static_page_wrapper.go.html")
+	if err != nil {
+		return nil, err
+	}
+
+	data := IframeData{
+		TargetRoute:      watchHtmlRoute,
+		ReloadScriptPath: reloadScriptPath,
+	}
+
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		w.Header().Set("Cache-Control", "no-cache")
+		err := t.Execute(w, data)
+		if err != nil {
+			fmt.Println(err)
+		}
+	}, nil
+}
+
+func MakeSingleFileHandler(filePath string, embedBytes []byte, contentType string, errHandler http.HandlerFunc, isDevEnv bool) http.HandlerFunc {
+
+	return func(w http.ResponseWriter, r *http.Request) {
+		var resBuffer *bytes.Buffer
+		if isDevEnv {
+			w.Header().Set("Cache-Control", "no-cache")
+			b, err := os.ReadFile(filePath)
+			if err != nil {
+				errHandler.ServeHTTP(w, r)
+				return
+			}
+			resBuffer = bytes.NewBuffer(b)
+		} else {
+			resBuffer = bytes.NewBuffer(embedBytes)
+		}
+		w.Header().Set("Content-Type", contentType)
+		resBuffer.WriteTo(w)
+	}
+}
+
+func MakeScriptHandler(checkinEndpoint string, port int) (http.HandlerFunc, error) {
 
 	t, err := template.ParseFS(sseConsumer, "sse_consumer.go.html")
 	if err != nil {
@@ -43,7 +97,7 @@ func (b Bakery) MakeScriptHandler(checkinEndpoint string, port int) (http.Handle
 	}, nil
 }
 
-func (b Bakery) MakeSSEHandler() (http.HandlerFunc, error) {
+func MakeSSEHandler(b Bakery) (http.HandlerFunc, error) {
 	pwd, err := os.Getwd()
 	if err != nil {
 		return nil, err

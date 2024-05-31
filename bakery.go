@@ -19,8 +19,6 @@ type Config struct {
 	WatchExtensions []string //if this is empty we don't have hot reload functionality
 	TemplateRootDir string   //relative to your project root
 	TemplateFS      fs.FS
-	StaticFS        fs.FS
-	StaticRootDir   string
 }
 
 type Bakery struct {
@@ -29,8 +27,6 @@ type Bakery struct {
 	recipes         recipeBook
 	templateRootDir string
 	templateFS      fs.FS
-	staticFS        fs.FS
-	StaticRootDir   string
 	watchExtensions []string
 	httpErrFN       http.HandlerFunc
 }
@@ -45,11 +41,7 @@ func New(config Config) Bakery {
 		prodCache:       templateCache,
 		recipes:         recipeBook,
 		templateRootDir: config.TemplateRootDir,
-		// templatePaths:   templatePaths,
-		templateFS: config.TemplateFS,
-		// templateGlobs:   config.TemplateGlobs,
-		staticFS:        config.StaticFS,
-		StaticRootDir:   config.StaticRootDir,
+		templateFS:      config.TemplateFS,
 		watchExtensions: config.WatchExtensions,
 		httpErrFN:       defaultErrorHandler,
 	}
@@ -102,7 +94,7 @@ func (b *Bakery) prepDevRecipes() {
 	})
 }
 
-// utility func if you want to return the template byte buffer instead of a handler
+// utility func if you want to return the template byte buffer instead of a handler.
 // useful if you want to handle the error yourself instead of letting the Bake() function return the http handlerfunc for you.
 func (b Bakery) BakeBuffer(recipeName string, data any) (*bytes.Buffer, error) {
 	return b.process(recipeName, data)

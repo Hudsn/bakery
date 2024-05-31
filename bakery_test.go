@@ -21,6 +21,9 @@ var testTemplates embed.FS
 //go:embed test_files/static/*.txt
 var testStatic embed.FS
 
+//go:embed test_files/static2/page.html
+var testPageByte []byte
+
 func TestBakery(t *testing.T) {
 
 	tFS, err := fs.Sub(testTemplates, "test_files/templates")
@@ -42,8 +45,6 @@ func TestBakery(t *testing.T) {
 		WatchExtensions: []string{".go.html", ".txt"},
 		TemplateRootDir: "test_files/templates",
 		TemplateFS:      tFS,
-		StaticFS:        sFS,
-		StaticRootDir:   "test_files/static",
 	}
 
 	myBakery := bakery.New(myConfig)
@@ -58,7 +59,7 @@ func TestBakery(t *testing.T) {
 		}
 		wantText := string(b)
 
-		myStaticHandler := myBakery.MakeStaticHandler("")
+		myStaticHandler := bakery.MakeStaticHandler("", "test_files/static", sFS, false)
 		testServ := httptest.NewServer(myStaticHandler)
 		defer testServ.Close()
 
@@ -88,7 +89,7 @@ func TestBakery(t *testing.T) {
 			Title: "MY TITLE",
 		}
 
-		wantText1 := string("<h1>HELLO WORLD!</h1>")
+		wantText1 := "<h1>HELLO WORLD!</h1>"
 		wantText2 := fmt.Sprintf("<title>%s</title>", templateData.Title)
 
 		testServ := httptest.NewServer(myBakery.Bake("home", templateData))
@@ -116,6 +117,76 @@ func TestBakery(t *testing.T) {
 		if !strings.Contains(string(resBytes), wantText2) {
 			t.Errorf("expected response to contain %q,\ninstead got:\n%q", wantText1, string(resBytes))
 
+		}
+
+	})
+	t.Run("check individual static page render", func(t *testing.T) {
+
+		wantText1 := "<h1>HELLO WORLD 2!</h1>"
+
+		errHandler := func(w http.ResponseWriter, r *http.Request) {
+			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		}
+
+		testSingleFileHandler := bakery.MakeSingleFileHandler("test_files/static2/page.html", testPageByte, "text/html", errHandler, false)
+
+		testServ := httptest.NewServer(testSingleFileHandler)
+		defer testServ.Close()
+
+		res, err := http.Get(testServ.URL)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer res.Body.Close()
+		if res.StatusCode != 200 {
+			t.Errorf("expected status OK, instead got status code %d", res.StatusCode)
+			return
+		}
+
+		resBytes, err := io.ReadAll(res.Body)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		if !strings.Contains(string(resBytes), wantText1) {
+			t.Errorf("expected response to contain %q,\ninstead got:\n%q", wantText1, string(resBytes))
+		}
+
+	})
+	t.Run("check static page iframe mirroring", func(t *testing.T) {
+
+		wantText1 := `<script defer="true" src="/reloader.js"></script>`
+		wantText2 := `<iframe width="100%" height="100%" frameborder="0" src="/imaginary"></iframe>`
+
+		iframeHandler, err := bakery.MakeIframeWatcher("/imaginary", "/reloader.js")
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		testServ := httptest.NewServer(iframeHandler)
+		defer testServ.Close()
+
+		res, err := http.Get(testServ.URL)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer res.Body.Close()
+		if res.StatusCode != 200 {
+			t.Errorf("expected status OK, instead got status code %d", res.StatusCode)
+			return
+		}
+
+		resBytes, err := io.ReadAll(res.Body)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		if !strings.Contains(string(resBytes), wantText1) {
+			t.Errorf("expected response to contain %q,\ninstead got:\n%q", wantText1, string(resBytes))
+		}
+
+		if !strings.Contains(string(resBytes), wantText2) {
+			t.Errorf("expected response to contain %q,\ninstead got:\n%q", wantText2, string(resBytes))
 		}
 
 	})

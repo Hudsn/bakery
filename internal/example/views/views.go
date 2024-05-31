@@ -4,7 +4,6 @@ import (
 	"embed"
 
 	"github.com/hudsn/bakery"
-	"github.com/hudsn/bakery/example/static"
 )
 
 //go:embed layouts/*go.html
@@ -18,14 +17,15 @@ func New(isDev bool) bakery.Bakery {
 	config := bakery.Config{
 		IsDev: isDev,
 		WatchExtensions: []string{
+			".html",
 			".go.html",
 			".css",
 			".js",
 		},
 		TemplateFS:      viewFS,
-		TemplateRootDir: "example/views",
-		StaticFS:        static.StaticFS,
-		StaticRootDir:   "example/static",
+		TemplateRootDir: "internal/example/views",
+		// StaticFS:        static.StaticFS,
+		// StaticRootDir:   "internal/example/static",
 	}
 
 	myBakery := bakery.New(config)

@@ -4,7 +4,7 @@ import (
 	"net/http"
 
 	"github.com/hudsn/bakery"
-	"github.com/hudsn/bakery/example/views/layouts"
+	"github.com/hudsn/bakery/internal/example/views/layouts"
 )
 
 func DefaultAppData(b bakery.Bakery) layouts.AppLayoutData {
@@ -22,4 +22,8 @@ func HomeHandler(b bakery.Bakery) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		b.Bake("home", data).ServeHTTP(w, r)
 	}
+}
+
+func DefaultErrorHandler(w http.ResponseWriter, r *http.Request) {
+	http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 }

@@ -27,21 +27,18 @@ Alternatively, remove the `-dev` flag to disable hot reload and only use embedde
 You absolutely don't have to follow this entire walkthrough if you can read and surmise most of what is being done in the `example/views/views.go`, and `example/main.go` files. However if you happen to want an over-explanation of the example implementation, read on...
 
 ### Your file structure
-You'll need to choose and eventually specify root directory paths for: 
+You'll need to choose and eventually specify a root directory path for your template files. This directory should contain all the files for your templates files. They can be organized within this directory however you want, but there's currently only support fo a single template directory.
 
-1. Your template files
-2. Your static files (images, css, js, etc...) 
-
-These directories should contain all the files for your templates and static files, respectively.
+Any static assets that you want to serve should be embedded. You can choose to either embed a directory as an `Embed.FS`, or a single file by embedding `[]byte`.  Bakery supports serving and hot reload development for both.
 
 In our example we use `example/views` for our templates, and `example/static` for static files. Note that these should be specified relative to the root of your project.
 
 ### Embed your files
 
-We declare the static file embedding for our `css` and `js` files at `example/static`:
+In our example, we declare the static file embedding for our `css` and `js` files at `internal/example/static`:
 
 ```go
-// example/static/static.go
+// internal/example/static/static.go
 
 import "embed"
 
@@ -52,9 +49,8 @@ var StaticFS embed.FS
 
 Note that you can implement this embedding any way you want. You just need to ensure that you know how to access them by path. For example, if we wanted to access our `style.css` file, we need to do so from the path `style/style.css`. 
 
-For another example if we hypothetically declared our style embed one level up from that folder with `go:embed static/style/*.css` we'd then access it with `static/style/style.css`. Any approach we want to take is fine, just be congizant of how you'd access it for later.
 
-We declare the template file embedding for our files at `example/views`:
+We declare the template file embedding for our files at `internal/example/views`:
 
 ```go
 //go:embed layouts/*go.html
@@ -80,9 +76,7 @@ bakery.Config{
         ".js",
     }, // which extensions we want to watch so that we can trigger browser reload
     TemplateFS:      viewFS, // our template FS that we declared above
-    TemplateRootDir: "example/views", // the path to our template directory (relative to our project root), that we decided above
-    StaticFS:        static.StaticFS, // our static FS that we declared above
-    StaticRootDir:   "example/static",  // the path to our static directory (relative to our project root), that we decided above
+    TemplateRootDir: "example/views", // the path to our template directory (relative to our project root) that we decided above
 }
 ```
 
@@ -90,24 +84,23 @@ bakery.Config{
 
 The `bakery.New` function accepts a configuration like the one above as its input, and returns a new `bakery.Bakery` struct for rendering and browser reloading.
 
-Let's write a quick function in our `example/views/views.go` file to generate a slightly different `Bakery` struct depending on whether we're in a development environment:
+Let's write a quick function in our `internal/example/views/views.go` file to generate a slightly different `Bakery` struct depending on whether we're in a development environment:
 
 ```go
-//example/views/views.go
+//internal/example/views/views.go
 
 func New(isDev bool) bakery.Bakery {
 
 	config := bakery.Config{
 		IsDev: isDev,
 		WatchExtensions: []string{
+			".html",
 			".go.html",
 			".css",
 			".js",
 		},
 		TemplateFS: viewFS,
 		TemplateRootDir: "example/views",
-		StaticFS:        static.StaticFS,
-		StaticRootDir:   "example/static",
 	}
 
 	myBakery := bakery.New(config)
@@ -125,7 +118,7 @@ Now that we have our `Bakery` engine struct, we can add template chains to be re
 We'll modify our own existing `New(isDev bool)` function from the previous section to enable this:
 
 ```go
-//example/views/views.go
+//internal/example/views/views.go
 
 func New(isDev bool) bakery.Bakery {
 
@@ -142,7 +135,7 @@ func New(isDev bool) bakery.Bakery {
 }
 ```
 
-Now we can simply call `myBakery.Bake("home", ourDataHere)` and we'll get back an `http.HandlerFunc` that renders the page for us! More on that later.
+Now we can simply call `myBakery.Bake("home", ourDataStructHere)` and we'll get back an `http.HandlerFunc` that renders the page for us! More on that later.
 
 ### Avoiding repetition (optional)
 
@@ -151,7 +144,7 @@ If we have template files in the beginning of our template chain that are common
 It would look something like this:
 
 ```go
-//example/views/views.go
+//internal/example/views/views.go
 var appTemplateChain := []string{
     "mylayout.go.html",
     "header.go.html",
@@ -174,7 +167,7 @@ Now that we have our Bakery constructor and our `home` page ready to be rendered
 First we get some input from our flags, and pass our `isDev` bool to our bakery constructor function that we already defined above:
 
 ```go
-//example/main.go
+//internal/example/main.go
 
 isDev := flag.Bool("dev", false, "whether the environment is dev or not")
 port := flag.Int("port", 9001, "set port to listen on")
@@ -188,9 +181,18 @@ bakery := views.New(*isDev) // we registered all our template paths and in the V
 Next, we'll create our handlers for hot reloading and serving static files:
 
 ```go
-//example/main.go
+//internal/example/main.go
 
 //...
+
+
+
+
+
+iframeHandlerHomePage, err := bakery.MakeIframeWatcher("/", "/tepid.js")
+if err != nil {
+	log.Fatal(err)
+}
 
 // this will be our handler for hosting the js file that listens for updates and triggers browser reload. 
 // *NOTE* the argument you pass here should be the route you assign to your "SSE Handler". in this case we've chosen "/tepid". 
@@ -200,27 +202,52 @@ if err != nil {
 }
 
 //this is the handler that sends triggers for the browser to reload.
-sseHandler, err := bakery.MakeSSEHandler()
+sseHandler, err := bakery.MakeSSEHandler(myBakery)
 if err != nil {
-    log.Fatal(err)
+	log.Fatal(err)
 }
 
 // this is the handler that will serve as the root for our static files.
 // the argument should be the URL path where you wish to serve static files from.
 // *NOTE* this handler already strips route prefixes.
-staticHandler := bakery.MakeStaticHandler("/static/")
+// *NOTE* we need to reference both the full path of the directory AND the embedded filesystem in the function arguments
+staticHandler := bakery.MakeStaticHandler(
+	"/static/", 
+	"internal/example/static", 
+	static.StaticFS, 
+	*isDev
+)
+
+// this is a handler that allows us to serve a single static file. 
+// *NOTE* it is recommended to use a direct []byte embed to reference the file in the 2nd argument
+singleFileHandler := bakery.MakeSingleFileHandler(
+	"internal/example/otherstatic/page.html",
+	otherstatic.PageStatic,
+	"text/html",
+	handlers.DefaultErrorHandler,
+	*isDev
+)
+
+//this is a handler which mirrors the route in the first argument via an iframe and enables hot reloading. It's mostly useful for editing static html like error pages, content posts, or other landing pages that aren't going to be dynamic.
+iframeHandlerHomePage, err := bakery.MakeIframeWatcher("/", "/tepid.js")
+if err != nil {
+	log.Fatal(err)
+}
+
 ```
 
 Finally, we'll create our router and wire up our generated handlers: 
 
 ```go
 //...
+
 router := http.NewServeMux()
 
 //we only want to make our reloader endpoints available if we're in a dev environment.
 if *isDev {
     router.HandleFunc("/tepid.js", scriptHandler)
     router.HandleFunc("/tepid", sseHandler)
+	router.HandleFunc("/index/dev", iframeHandlerHomePage) //*NOTE* we can access /index/dev to view a mirror of our static html "/" route with hot reload enabled whenver you change the underlying html file!
 }
 router.HandleFunc("/static/", staticHandler)
 
@@ -321,7 +348,9 @@ The `DefaultAppData` helper is just a way for us to get some sane default values
 
 All we really did here in our `HomeHandler` is set the page title to `Home` and then let our `Bake` function take care of the rest.
 
-With our `HomeHandler` functional, let's give it a path in our router and call it done. Here's what our `main.go` looks like at the end:
+With our `HomeHandler` functional, let's give it a path in our router and call it done. Here's what our `main.go` looks like at the end.
+
+Note that you probably won't want or need to use all of these different handler types, these were just included for a more comprehensive example:
 
 ```go
 //example/main.go
@@ -331,26 +360,48 @@ func main() {
 	port := flag.Int("port", 9001, "set port to listen on")
 	flag.Parse()
 
-	bakery := views.New(*isDev) 
+	myBakery := views.New(*isDev) // we register all our template paths and stuff in the Views folder/package, then call it here.
 	scriptHandler, err := bakery.MakeScriptHandler("/tepid", *port)
 	if err != nil {
 		log.Fatal(err)
 	}
-	sseHandler, err := bakery.MakeSSEHandler()
+	sseHandler, err := bakery.MakeSSEHandler(myBakery)
 	if err != nil {
 		log.Fatal(err)
 	}
-	staticHandler := bakery.MakeStaticHandler("/static/")
+	staticHandler := bakery.MakeStaticHandler(
+		"/static/", 
+		"internal/example/static", 
+		static.StaticFS, 
+		*isDev
+	)
+
+	singleFileHandler := bakery.MakeSingleFileHandler(
+		"internal/example/otherstatic/page.html", 
+		otherstatic.PageStatic, 
+		"text/html", 
+		handlers.DefaultErrorHandler, 
+		*isDev
+	)
+
+	iframeHandlerHomePage, err := bakery.MakeIframeWatcher("/", "/tepid.js")
+	if err != nil {
+		log.Fatal(err)
+	}
 
 	router := http.NewServeMux()
 	if *isDev {
 		router.HandleFunc("/tepid.js", scriptHandler)
 		router.HandleFunc("/tepid", sseHandler)
+		router.HandleFunc("/index/dev", iframeHandlerHomePage) //*NOTE* we can access /index/dev to view a mirror of our static html "/" route with hot reload enabled whenver you change the underlying html file!
 	}
 	router.HandleFunc("/static/", staticHandler)
 
-    //HERE - we added our home handler that we defined above.
-	router.HandleFunc("/home", handlers.HomeHandler(bakery))
+    //HERE - we add our route handlers that we defined above.
+	router.HandleFunc("/", singleFileHandler)
+	router.HandleFunc("/home", handlers.HomeHandler(myBakery))
+	router.HandleFunc("/static/", staticHandler)
+
 
 	fmt.Printf("Listening on :%d...\n", *port)
 	log.Fatal(http.ListenAndServe(fmt.Sprintf(":%d", *port), router))
